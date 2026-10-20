@@ -264,7 +264,7 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 				if (player == null) {
 					yield "Player is not in a world.";
 				}
-				player.drop(fullStack);
+				invokeDropSelected(player, mc, fullStack);
 				yield fullStack ? "Dropped entire stack from selected slot." : "Dropped 1 item from selected slot.";
 			}
 			case "swap" -> {
@@ -421,7 +421,6 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 				Path tempRoot = getConfigDir().resolve("rcm-snap-" + UUID.randomUUID());
 				Files.createDirectories(tempRoot);
 				File tempDir = tempRoot.toFile();
-				Object renderTarget = mc.getMainRenderTarget();
 				Consumer<Component> callback = msg -> {
 					try {
 						Path shotsDir = tempRoot.resolve("screenshots");
@@ -446,9 +445,12 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 				boolean called = false;
 				for (Method m : Screenshot.class.getMethods()) {
 					if ("grab".equals(m.getName()) && m.getParameterCount() == 3) {
-						m.invoke(null, tempDir, renderTarget, callback);
-						called = true;
-						break;
+						Object renderTarget = resolveRenderTarget(mc, m.getParameterTypes()[1]);
+						if (renderTarget != null) {
+							m.invoke(null, tempDir, renderTarget, callback);
+							called = true;
+							break;
+						}
 					}
 				}
 				if (!called) {
@@ -460,6 +462,42 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 			}
 		});
 		return future;
+	}
+
+	private static void invokeDropSelected(LocalPlayer player, Minecraft mc, boolean fullStack) {
+		for (String mName : new String[]{"drop", "dropSelectedItem"}) {
+			try {
+				Method m = player.getClass().getMethod(mName, boolean.class);
+				m.invoke(player, Boolean.valueOf(fullStack));
+				return;
+			} catch (Throwable ignored) {
+			}
+		}
+		int count = fullStack ? 64 : 1;
+		for (int i = 0; i < count; i++) {
+			incrementClickCount(mc.options.keyDrop);
+		}
+	}
+
+	private static Object resolveRenderTarget(Minecraft mc, Class<?> targetType) {
+		for (String preferred : new String[]{"mainRenderTarget", "getMainRenderTarget"}) {
+			try {
+				Method m = mc.getClass().getMethod(preferred);
+				if (targetType.isAssignableFrom(m.getReturnType())) {
+					return m.invoke(mc);
+				}
+			} catch (Throwable ignored) {
+			}
+		}
+		for (Method m : mc.getClass().getMethods()) {
+			if (m.getParameterCount() == 0 && targetType.isAssignableFrom(m.getReturnType())) {
+				try {
+					return m.invoke(mc);
+				} catch (Throwable ignored) {
+				}
+			}
+		}
+		return null;
 	}
 
 	private static byte[] captureDesktopFallback() {
