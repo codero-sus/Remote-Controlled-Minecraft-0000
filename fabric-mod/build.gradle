@@ -1,0 +1,108 @@
+buildscript {
+	repositories {
+		maven {
+			name = 'Fabric'
+			url = 'https://maven.fabricmc.net/'
+		}
+		mavenCentral()
+		gradlePluginPortal()
+	}
+	dependencies {
+		classpath "net.fabricmc:fabric-loom:${project.property('loom_version')}"
+	}
+}
+
+def mcVer = project.findProperty('minecraft_version')?.toString() ?: '1.21.11'
+def loaderVer = project.findProperty('loader_version')?.toString() ?: '0.20.1'
+def yarnVer = project.findProperty('yarn_mappings')?.toString() ?: ''
+def isUnobf = (project.findProperty('unobfuscated')?.toString() ?: 'false').toBoolean()
+def javaRel = (project.findProperty('java_release')?.toString() ?: (isUnobf ? '25' : '21')).toInteger()
+def mcDep = project.findProperty('minecraft_dep')?.toString() ?: mcVer
+
+if (isUnobf) {
+	apply plugin: 'net.fabricmc.fabric-loom'
+} else {
+	apply plugin: 'net.fabricmc.fabric-loom-remap'
+}
+apply plugin: 'maven-publish'
+
+version = project.property('mod_version')
+group = project.property('maven_group')
+
+base {
+	archivesName = "${project.property('archives_base_name')}-mc${mcVer}"
+}
+
+repositories {
+	mavenCentral()
+}
+
+sourceSets {
+	main {
+		if (isUnobf) {
+			java.srcDir 'src/unobf/java'
+			resources.srcDir 'src/unobf/resources'
+		} else {
+			java.srcDir 'src/obf/java'
+			resources.srcDir 'src/obf/resources'
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${mcVer}"
+
+	if (isUnobf) {
+		implementation "net.fabricmc:fabric-loader:${loaderVer}"
+	} else {
+		if (yarnVer && yarnVer != 'MOJANG') {
+			mappings "net.fabricmc:yarn:${yarnVer}:v2"
+		} else {
+			mappings loom.officialMojangMappings()
+		}
+		modImplementation "net.fabricmc:fabric-loader:${loaderVer}"
+	}
+
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+processResources {
+	def props = [
+		'version'      : project.version.toString(),
+		'mc_dep'       : mcDep,
+		'java_release' : javaRel.toString(),
+		'mc_version'   : mcVer
+	]
+	inputs.properties(props)
+
+	filesMatching('fabric.mod.json') {
+		expand(props)
+	}
+}
+
+tasks.named('compileJava', JavaCompile).configure {
+	options.encoding = 'UTF-8'
+	options.release = javaRel
+}
+
+tasks.named('compileTestJava', JavaCompile).configure {
+	options.encoding = 'UTF-8'
+	options.release = Math.max(javaRel, 17)
+}
+
+java {
+	withSourcesJar()
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+}
+
+jar {
+	inputs.property 'archivesName', project.base.archivesName
+	from('../LICENSE') {
+		rename { "${it}_${inputs.properties.archivesName}" }
+	}
+}

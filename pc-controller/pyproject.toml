@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rcm-pc-controller"
+version = "2.0.0"
+description = "Standalone cross-platform Discord remote controller & monitor for PC and Minecraft instances."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.4.0",
+    "audioop-lts>=0.2.1; python_version >= '3.13'",
+    "psutil>=6.0.0",
+    "mss>=9.0.1",
+    "Pillow>=10.4.0",
+    "pyautogui>=0.9.54",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+rcm-pc = "rcm_pc.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["rcm_pc*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

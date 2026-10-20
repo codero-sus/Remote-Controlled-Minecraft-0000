@@ -1,0 +1,33 @@
+# Gradle / Java
+.gradle/
+build/
+**/build/
+out/
+bin/
+*.class
+*.log
+
+# Local Runtime Configs (protect user tokens)
+config/rcm.json
+pc-controller/config.json
+.env
+*.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

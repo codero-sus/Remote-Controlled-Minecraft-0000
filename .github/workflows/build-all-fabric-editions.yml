@@ -1,0 +1,312 @@
+name: Build All Fabric Editions & PC Controller
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      compile_mode:
+        description: "Direct Gradle compilation scope (all remaining snapshot editions are also packaged & bytecode-verified)"
+        required: false
+        default: "all-stable"
+        type: choice
+        options:
+          - all-stable
+          - all-including-snapshots
+          - filter
+      edition_filter:
+        description: "Regex filter when compile_mode = filter (e.g. ^1\\.21|^26\\.)"
+        required: false
+        default: ""
+        type: string
+      shards:
+        description: "Number of parallel Gradle runner shards"
+        required: false
+        default: "12"
+        type: string
+      publish_release:
+        description: "Create/update a GitHub Release with all built artifacts"
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: "Release tag when publish_release = true (e.g. v2.0.0)"
+        required: false
+        default: "v2.0.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Discover EVERY Fabric-supported Minecraft edition live from Fabric Meta
+  # ---------------------------------------------------------------------------
+  discover-editions:
+    name: Discover All Fabric Minecraft Editions
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      total_editions: ${{ steps.discover.outputs.total_editions }}
+      stable_editions: ${{ steps.discover.outputs.stable_editions }}
+      loader_version: ${{ steps.discover.outputs.loader_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Query Fabric Meta API for every supported edition
+        id: discover
+        run: |
+          python3 scripts/discover_fabric_versions.py \
+            --shards "${{ inputs.shards || '12' }}" \
+            --compile-mode "${{ inputs.compile_mode || 'all-stable' }}" \
+            --filter "${{ inputs.edition_filter || '' }}" \
+            --output-json all_fabric_editions.json
+
+      - name: Upload discovered Fabric edition catalog
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabric-editions-catalog
+          path: all_fabric_editions.json
+
+  # ---------------------------------------------------------------------------
+  # 2. Parallel Matrix: Compile EVERY Fabric release with Gradle + Fabric Loom
+  # ---------------------------------------------------------------------------
+  build-fabric-matrix:
+    name: "Fabric Mod [${{ matrix.versions_label }}]"
+    needs: discover-editions
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-editions.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Microsoft OpenJDK 25 (supports --release 8..25)
+        uses: actions/setup-java@v5
+        with:
+          java-version: "25"
+          distribution: "microsoft"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run JUnit 5 Core Test Suite (Shard 0)
+        if: matrix.shard == 0
+        working-directory: fabric-mod
+        run: |
+          chmod +x ./gradlew
+          ./gradlew test --no-daemon
+
+      - name: Compile every assigned Minecraft edition via Fabric Loom
+        env:
+          EDITIONS_JSON: ${{ matrix.editions_json }}
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil, subprocess
+          from pathlib import Path
+
+          editions = json.loads(os.environ["EDITIONS_JSON"])
+          mod_dir = Path("fabric-mod").resolve()
+          out_dir = Path("built-shard-jars").resolve()
+          out_dir.mkdir(parents=True, exist_ok=True)
+          gradlew = str(mod_dir / "gradlew")
+          os.chmod(gradlew, 0o755)
+
+          for idx, item in enumerate(editions, 1):
+              ver = item["version"]
+              safe_ver = ver.replace("/", "_").replace(" ", "_")
+              unobf = str(item["unobfuscated"]).lower()
+              java_rel = str(item["java_release"])
+              yarn = item["yarn_mappings"]
+              loader = item["loader_version"]
+
+              print(f"\n=== [{idx}/{len(editions)}] Building Minecraft {ver} (unobf={unobf}, java={java_rel}, yarn={yarn}) ===", flush=True)
+              build_dir = mod_dir / "build"
+              if build_dir.exists():
+                  shutil.rmtree(build_dir)
+
+              cmd = [
+                  gradlew,
+                  "build",
+                  "-x",
+                  "test",
+                  "--no-configuration-cache",
+                  f"-Pminecraft_version={ver}",
+                  f"-Ploader_version={loader}",
+                  f"-Pjava_release={java_rel}",
+                  f"-Punobfuscated={unobf}",
+                  f"-Pminecraft_dep={ver}",
+              ]
+              if yarn:
+                  cmd.append(f"-Pyarn_mappings={yarn}")
+
+              subprocess.run(cmd, cwd=str(mod_dir), check=True)
+
+              libs = sorted(
+                  p for p in (mod_dir / "build" / "libs").glob("*.jar")
+                  if not p.name.endswith("-sources.jar") and not p.name.endswith("-dev.jar")
+              )
+              if not libs:
+                  raise RuntimeError(f"No output JAR produced for Minecraft {ver}")
+
+              target_name = f"remote-controlled-minecraft-mc{safe_ver}-2.0.0.jar"
+              shutil.copy2(libs[0], out_dir / target_name)
+              print(f"Built {target_name} ({libs[0].stat().st_size} bytes)", flush=True)
+          PY
+
+      - name: Upload compiled shard JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabric-shard-${{ matrix.shard }}
+          path: built-shard-jars/*.jar
+
+  # ---------------------------------------------------------------------------
+  # 3. Package, Stamp & Bytecode-Verify ALL ~500 Fabric Editions + Universal JARs
+  # ---------------------------------------------------------------------------
+  package-all-fabric-editions:
+    name: Package & Verify All Fabric Editions
+    needs: [discover-editions, build-fabric-matrix]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download catalog and all compiled matrix shards
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts-in
+
+      - name: Assemble, verify bytecode & generate complete Fabric editions bundle
+        run: |
+          python3 scripts/package_all_editions.py \
+            --catalog artifacts-in/fabric-editions-catalog/all_fabric_editions.json \
+            --shards-dir artifacts-in \
+            --out-dir dist \
+            --mod-version 2.0.0
+          cat dist/BUILD-SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Universal & All Stable Minecraft Edition Mods
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcm-fabric-mods-stable-and-universal
+          path: |
+            dist/universal/*.jar
+            dist/stable-editions/*.jar
+            dist/EDITION-MANIFEST.json
+            dist/SHA256SUMS.txt
+
+      - name: Upload Complete Archive of EVERY Fabric Edition in Existence (Releases + Snapshots)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcm-fabric-mods-ALL-editions-complete
+          path: |
+            dist/remote-controlled-minecraft-ALL-*-FABRIC-EDITIONS-*.tar.gz
+            dist/EDITION-MANIFEST.json
+            dist/SHA256SUMS.txt
+
+  # ---------------------------------------------------------------------------
+  # 4. Test & Build Standalone Cross-Platform PC Remote Controller (Win/Linux/Mac)
+  # ---------------------------------------------------------------------------
+  build-pc-controller:
+    name: "PC Controller [${{ matrix.os_label }}]"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os_label: linux-x64
+            bin_name: rcm-pc-controller-linux-x64
+          - runner: windows-latest
+            os_label: windows-x64
+            bin_name: rcm-pc-controller-windows-x64.exe
+          - runner: macos-latest
+            os_label: macos-arm64
+            bin_name: rcm-pc-controller-macos-arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies & run pytest suite
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip wheel build pyinstaller
+          python -m pip install -e "./pc-controller[dev]"
+          pytest -v pc-controller/tests
+
+      - name: Build single-file standalone executable & Python wheel
+        shell: bash
+        run: |
+          mkdir -p pc-dist
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --onefile \
+            --name "${{ matrix.bin_name }}" \
+            pc-controller/rcm_pc/__main__.py
+          cp "dist/${{ matrix.bin_name }}" pc-dist/
+          if [ "${{ matrix.os_label }}" = "linux-x64" ]; then
+            python -m build pc-controller --outdir pc-dist/
+          fi
+
+      - name: Upload PC Controller binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcm-pc-controller-${{ matrix.os_label }}
+          path: pc-dist/*
+
+  # ---------------------------------------------------------------------------
+  # 5. Automatic GitHub Release on Tag Push (`v*`) or Manual Release Dispatch
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish Full Multi-Edition GitHub Release
+    needs: [package-all-fabric-editions, build-pc-controller]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all built mod JARs and PC Controller binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: release-in
+
+      - name: Prepare flat release assets folder
+        run: |
+          mkdir -p release-assets
+          cp release-in/rcm-fabric-mods-stable-and-universal/universal/*.jar release-assets/
+          cp release-in/rcm-fabric-mods-stable-and-universal/stable-editions/*.jar release-assets/
+          cp release-in/rcm-fabric-mods-ALL-editions-complete/*.tar.gz release-assets/
+          cp release-in/rcm-fabric-mods-ALL-editions-complete/EDITION-MANIFEST.json release-assets/
+          cp release-in/rcm-fabric-mods-ALL-editions-complete/SHA256SUMS.txt release-assets/
+          cp release-in/rcm-pc-controller-linux-x64/* release-assets/
+          cp release-in/rcm-pc-controller-windows-x64/* release-assets/
+          cp release-in/rcm-pc-controller-macos-arm64/* release-assets/
+          ls -lh release-assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag || 'v2.0.0' }}
+          name: "Remote Controlled Minecraft ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag || 'v2.0.0' }} — All Fabric Editions + PC Controller"
+          generate_release_notes: true
+          files: release-assets/*
