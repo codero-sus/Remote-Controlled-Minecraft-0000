@@ -9,6 +9,7 @@ def yarnVer = (project.findProperty('yarn_mappings') ?: '').toString()
 def javaRel = (project.findProperty('java_release') ?: '21').toString().toInteger()
 def mcDep = (project.findProperty('minecraft_dep') ?: mcVer).toString()
 def javaVerEnum = JavaVersion.toVersion(javaRel == 8 ? '1.8' : javaRel.toString())
+def useLegacyV1Yarn = mcVer in ['1.14', '1.14.1', '1.14.2'] || mcVer.startsWith('18w') || mcVer.startsWith('19w0') || mcVer.startsWith('19w1')
 
 version = project.property('mod_version')
 group = project.property('maven_group')
@@ -24,6 +25,7 @@ repositories {
 sourceSets {
 	main {
 		java.srcDir 'src/obf/java'
+		java.srcDir(useLegacyV1Yarn ? 'src/obf_legacy114/java' : 'src/obf_modern/java')
 		resources.srcDir 'src/obf/resources'
 	}
 }
@@ -31,7 +33,6 @@ sourceSets {
 dependencies {
 	minecraft "com.mojang:minecraft:${mcVer}"
 	if (!yarnVer.isEmpty() && yarnVer != 'MOJANG') {
-		def useLegacyV1Yarn = mcVer in ['1.14', '1.14.1', '1.14.2'] || mcVer.startsWith('18w') || mcVer.startsWith('19w0') || mcVer.startsWith('19w1')
 		mappings(useLegacyV1Yarn ? "net.fabricmc:yarn:${yarnVer}" : "net.fabricmc:yarn:${yarnVer}:v2")
 	} else {
 		mappings loom.officialMojangMappings()
