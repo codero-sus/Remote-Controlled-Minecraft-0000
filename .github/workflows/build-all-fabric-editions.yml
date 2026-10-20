@@ -41,9 +41,6 @@ permissions:
   contents: write
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1. Discover EVERY Fabric-supported Minecraft edition live from Fabric Meta
-  # ---------------------------------------------------------------------------
   discover-editions:
     name: Discover All Fabric Minecraft Editions
     runs-on: ubuntu-24.04
@@ -76,9 +73,6 @@ jobs:
           name: fabric-editions-catalog
           path: all_fabric_editions.json
 
-  # ---------------------------------------------------------------------------
-  # 2. Parallel Matrix: Compile EVERY Fabric release with Gradle + Fabric Loom
-  # ---------------------------------------------------------------------------
   build-fabric-matrix:
     name: "Fabric Mod [${{ matrix.versions_label }}]"
     needs: discover-editions
@@ -106,14 +100,22 @@ jobs:
         working-directory: fabric-mod
         run: |
           chmod +x ./gradlew
-          ./gradlew test --no-daemon
+          cp build.obf.gradle build.gradle
+          if ! ./gradlew test --stacktrace > junit.log 2>&1; then
+            cat junit.log
+            tail -n 35 junit.log | while IFS= read -r line; do
+              echo "::error::[JUnit] $line"
+            done
+            exit 1
+          fi
+          cat junit.log
 
       - name: Compile every assigned Minecraft edition via Fabric Loom
         env:
           EDITIONS_JSON: ${{ matrix.editions_json }}
         run: |
           python3 - <<'PY'
-          import json, os, shutil, subprocess
+          import json, os, shutil, subprocess, sys
           from pathlib import Path
 
           editions = json.loads(os.environ["EDITIONS_JSON"])
@@ -126,15 +128,20 @@ jobs:
           for idx, item in enumerate(editions, 1):
               ver = item["version"]
               safe_ver = ver.replace("/", "_").replace(" ", "_")
-              unobf = str(item["unobfuscated"]).lower()
+              is_unobf = bool(item["unobfuscated"])
               java_rel = str(item["java_release"])
               yarn = item["yarn_mappings"]
               loader = item["loader_version"]
 
-              print(f"\n=== [{idx}/{len(editions)}] Building Minecraft {ver} (unobf={unobf}, java={java_rel}, yarn={yarn}) ===", flush=True)
+              print(f"\n=== [{idx}/{len(editions)}] Building Minecraft {ver} (unobf={is_unobf}, java={java_rel}, yarn={yarn}) ===", flush=True)
               build_dir = mod_dir / "build"
               if build_dir.exists():
                   shutil.rmtree(build_dir)
+
+              shutil.copy2(
+                  mod_dir / ("build.unobf.gradle" if is_unobf else "build.obf.gradle"),
+                  mod_dir / "build.gradle",
+              )
 
               cmd = [
                   gradlew,
@@ -145,19 +152,27 @@ jobs:
                   f"-Pminecraft_version={ver}",
                   f"-Ploader_version={loader}",
                   f"-Pjava_release={java_rel}",
-                  f"-Punobfuscated={unobf}",
                   f"-Pminecraft_dep={ver}",
               ]
-              if yarn:
+              if not is_unobf and yarn:
                   cmd.append(f"-Pyarn_mappings={yarn}")
 
-              subprocess.run(cmd, cwd=str(mod_dir), check=True)
+              proc = subprocess.run(cmd, cwd=str(mod_dir), text=True, capture_output=True)
+              print(proc.stdout, flush=True)
+              if proc.stderr:
+                  print(proc.stderr, file=sys.stderr, flush=True)
+              if proc.returncode != 0:
+                  combined = [l for l in (proc.stdout + "\n" + proc.stderr).splitlines() if l.strip()]
+                  for err_line in combined[-35:]:
+                      print(f"::error::[MC {ver}] {err_line}", flush=True)
+                  raise SystemExit(proc.returncode)
 
               libs = sorted(
                   p for p in (mod_dir / "build" / "libs").glob("*.jar")
                   if not p.name.endswith("-sources.jar") and not p.name.endswith("-dev.jar")
               )
               if not libs:
+                  print(f"::error::[MC {ver}] No output JAR found in build/libs", flush=True)
                   raise RuntimeError(f"No output JAR produced for Minecraft {ver}")
 
               target_name = f"remote-controlled-minecraft-mc{safe_ver}-2.0.0.jar"
@@ -171,9 +186,6 @@ jobs:
           name: fabric-shard-${{ matrix.shard }}
           path: built-shard-jars/*.jar
 
-  # ---------------------------------------------------------------------------
-  # 3. Package, Stamp & Bytecode-Verify ALL ~500 Fabric Editions + Universal JARs
-  # ---------------------------------------------------------------------------
   package-all-fabric-editions:
     name: Package & Verify All Fabric Editions
     needs: [discover-editions, build-fabric-matrix]
@@ -220,9 +232,6 @@ jobs:
             dist/EDITION-MANIFEST.json
             dist/SHA256SUMS.txt
 
-  # ---------------------------------------------------------------------------
-  # 4. Test & Build Standalone Cross-Platform PC Remote Controller (Win/Linux/Mac)
-  # ---------------------------------------------------------------------------
   build-pc-controller:
     name: "PC Controller [${{ matrix.os_label }}]"
     runs-on: ${{ matrix.runner }}
@@ -276,9 +285,6 @@ jobs:
           name: rcm-pc-controller-${{ matrix.os_label }}
           path: pc-dist/*
 
-  # ---------------------------------------------------------------------------
-  # 5. Automatic GitHub Release on Tag Push (`v*`) or Manual Release Dispatch
-  # ---------------------------------------------------------------------------
   publish-release:
     name: Publish Full Multi-Edition GitHub Release
     needs: [package-all-fabric-editions, build-pc-controller]
