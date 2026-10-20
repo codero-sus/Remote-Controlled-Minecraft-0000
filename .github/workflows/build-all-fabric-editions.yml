@@ -40,6 +40,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   discover-editions:
     name: Discover All Fabric Minecraft Editions
@@ -101,11 +104,9 @@ jobs:
         run: |
           chmod +x ./gradlew
           cp build.obf.gradle build.gradle
-          if ! ./gradlew test --stacktrace > junit.log 2>&1; then
+          if ! ./gradlew test > junit.log 2>&1; then
             cat junit.log
-            tail -n 35 junit.log | while IFS= read -r line; do
-              echo "::error::[JUnit] $line"
-            done
+            python3 -c 'import pathlib; lines=[l for l in pathlib.Path("junit.log").read_text().splitlines() if l.strip()]; print("::error title=JUnit Build Failure::" + "%0A".join(lines[-45:]))'
             exit 1
           fi
           cat junit.log
@@ -163,8 +164,8 @@ jobs:
                   print(proc.stderr, file=sys.stderr, flush=True)
               if proc.returncode != 0:
                   combined = [l for l in (proc.stdout + "\n" + proc.stderr).splitlines() if l.strip()]
-                  for err_line in combined[-35:]:
-                      print(f"::error::[MC {ver}] {err_line}", flush=True)
+                  encoded = "%0A".join(combined[-55:])
+                  print(f"::error title=MC {ver} Failure::{encoded}", flush=True)
                   raise SystemExit(proc.returncode)
 
               libs = sorted(
