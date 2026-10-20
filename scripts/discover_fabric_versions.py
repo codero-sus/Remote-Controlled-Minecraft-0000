@@ -71,6 +71,25 @@ def resolve_java_release(mc_version: str, unobfuscated: bool) -> int:
     return 8
 
 
+def is_unobfuscated_version(mc_version: str, intermediary_set: Set[str]) -> bool:
+    """
+    Determine whether a Minecraft edition uses Mojang's unobfuscated class distribution
+    (`net.fabricmc.fabric-loom` with zero remap). Note that early 26.1/26.2 entries also
+    received bridge entries in `/v2/versions/intermediary` even though Mojang dropped
+    obfuscation starting with 26.1, so all 26.x+ releases/snapshots must always use `unobf`.
+    """
+    v = mc_version.strip()
+    if v.endswith("_unobfuscated"):
+        return True
+    rel = re.match(r"^(\d+)\.", v)
+    if rel and int(rel.group(1)) >= 26:
+        return True
+    sw = re.match(r"^(\d{2})w\d{2}", v)
+    if sw and int(sw.group(1)) >= 26:
+        return True
+    return v not in intermediary_set
+
+
 def build_edition_catalog(
     game_entries: List[Dict[str, Any]],
     intermediary_set: Set[str],
@@ -81,7 +100,7 @@ def build_edition_catalog(
     for entry in game_entries:
         ver = str(entry["version"])
         stable = bool(entry.get("stable", False))
-        is_unobf = ver not in intermediary_set
+        is_unobf = is_unobfuscated_version(ver, intermediary_set)
         java_rel = resolve_java_release(ver, is_unobf)
         yarn_ver = "" if is_unobf else yarn_map.get(ver, "MOJANG")
         catalog.append(
@@ -136,6 +155,13 @@ def main() -> int:
         compile_targets = [c for c in catalog if pat.search(c["version"])]
     else:
         compile_targets = [c for c in catalog if c["stable"]]
+        # Also include a representative Java-21 unobfuscated snapshot (e.g. 1.21.11_unobfuscated)
+        # if present so snapshot packaging also has a native Java-21 classfile-65 unobfuscated base JAR.
+        existing_vers = {c["version"] for c in compile_targets}
+        for c in catalog:
+            if c["unobfuscated"] and c["java_release"] <= 21 and c["version"] not in existing_vers:
+                compile_targets.append(c)
+                break
 
     shard_count = max(1, min(args.shards, max(1, len(compile_targets))))
     buckets: List[List[Dict[str, Any]]] = [[] for _ in range(shard_count)]

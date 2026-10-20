@@ -12,7 +12,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -123,7 +123,7 @@ public final class DiscordRestClient {
 	}
 
 	public byte[] downloadUrl(String urlString) throws IOException {
-		HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
+		HttpURLConnection conn = (HttpURLConnection) URI.create(urlString).toURL().openConnection();
 		conn.setRequestMethod("GET");
 		conn.setConnectTimeout(15000);
 		conn.setReadTimeout(30000);
@@ -162,7 +162,7 @@ public final class DiscordRestClient {
 	}
 
 	private String requestJson(String method, String endpoint, String jsonBody) throws IOException {
-		HttpURLConnection conn = (HttpURLConnection) new URL(API_BASE + endpoint).openConnection();
+		HttpURLConnection conn = (HttpURLConnection) URI.create(API_BASE + endpoint).toURL().openConnection();
 		conn.setRequestMethod(method);
 		conn.setConnectTimeout(15000);
 		conn.setReadTimeout(30000);
@@ -191,7 +191,7 @@ public final class DiscordRestClient {
 	) throws IOException {
 		String boundary = "----RcmDiscordBoundary" + UUID.randomUUID().toString().replace("-", "");
 		byte[] body = buildMultipartBytes(boundary, payloadJson, fileName, fileBytes);
-		HttpURLConnection conn = (HttpURLConnection) new URL(API_BASE + endpoint).openConnection();
+		HttpURLConnection conn = (HttpURLConnection) URI.create(API_BASE + endpoint).toURL().openConnection();
 		conn.setRequestMethod(method);
 		conn.setConnectTimeout(15000);
 		conn.setReadTimeout(45000);

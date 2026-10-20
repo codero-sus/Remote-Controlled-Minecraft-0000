@@ -192,7 +192,7 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 
 		if (player.connection != null) {
 			for (PlayerInfo info : player.connection.getOnlinePlayers()) {
-				snap.onlinePlayers.add(info.getProfile().name());
+				snap.onlinePlayers.add(extractProfileName(info.getProfile()));
 			}
 		}
 
@@ -474,6 +474,23 @@ public final class UnobfMinecraftPlatform implements MinecraftPlatform {
 		} catch (Throwable ignored) {
 			return new byte[0];
 		}
+	}
+
+	private static String extractProfileName(Object profile) {
+		if (profile == null) {
+			return "";
+		}
+		for (String mName : new String[]{"name", "getName"}) {
+			try {
+				Method m = profile.getClass().getMethod(mName);
+				Object v = m.invoke(profile);
+				if (v != null) {
+					return String.valueOf(v);
+				}
+			} catch (Throwable ignored) {
+			}
+		}
+		return String.valueOf(profile);
 	}
 
 	private static int readSelectedSlot(Object inventory) {

@@ -4,7 +4,6 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
-import com.mojang.brigadier.context.CommandContext;
 
 import java.lang.reflect.Method;
 import java.util.function.Function;
@@ -18,13 +17,13 @@ public final class BrigadierRegistrar {
 	private BrigadierRegistrar() {
 	}
 
-	@SuppressWarnings({"unchecked", "rawtypes"})
+	@SuppressWarnings("unchecked")
 	public static void registerOnServer(Object serverInstance, final Function<String, String> handler, final MinecraftPlatform platform) {
 		if (serverInstance == null) {
 			return;
 		}
 		try {
-			CommandDispatcher dispatcher = extractDispatcher(serverInstance);
+			CommandDispatcher<Object> dispatcher = (CommandDispatcher<Object>) extractDispatcher(serverInstance);
 			if (dispatcher == null) {
 				return;
 			}
@@ -32,33 +31,26 @@ public final class BrigadierRegistrar {
 				return;
 			}
 
-			LiteralArgumentBuilder root = LiteralArgumentBuilder.literal("rcm")
-				.executes(new com.mojang.brigadier.Command() {
-					@Override
-					public int run(CommandContext ctx) {
-						String reply = handler.apply("status");
-						platform.displayLocalMessage(reply);
-						return 1;
-					}
-				})
-				.then(RequiredArgumentBuilder.argument("args", StringArgumentType.greedyString())
-					.executes(new com.mojang.brigadier.Command() {
-						@Override
-						public int run(CommandContext ctx) {
-							String args = StringArgumentType.getString(ctx, "args");
-							String reply = handler.apply(args);
-							platform.displayLocalMessage(reply);
-							return 1;
-						}
-					}));
-
+			LiteralArgumentBuilder<Object> root = LiteralArgumentBuilder.<Object>literal("rcm")
+				.executes(ctx -> {
+					String reply = handler.apply("status");
+					platform.displayLocalMessage(reply);
+					return 1;
+				});
+			RequiredArgumentBuilder<Object, String> argsNode = RequiredArgumentBuilder.<Object, String>argument("args", StringArgumentType.greedyString())
+				.executes(ctx -> {
+					String args = StringArgumentType.getString(ctx, "args");
+					String reply = handler.apply(args);
+					platform.displayLocalMessage(reply);
+					return 1;
+				});
+			root.then(argsNode);
 			dispatcher.register(root);
 		} catch (Throwable ignored) {
 		}
 	}
 
-	@SuppressWarnings("rawtypes")
-	public static CommandDispatcher extractDispatcher(Object serverInstance) {
+	public static CommandDispatcher<?> extractDispatcher(Object serverInstance) {
 		try {
 			Object commandManager = null;
 			for (Method m : serverInstance.getClass().getMethods()) {
@@ -77,7 +69,7 @@ public final class BrigadierRegistrar {
 			}
 			for (Method m : commandManager.getClass().getMethods()) {
 				if (m.getParameterCount() == 0 && CommandDispatcher.class.isAssignableFrom(m.getReturnType())) {
-					return (CommandDispatcher) m.invoke(commandManager);
+					return (CommandDispatcher<?>) m.invoke(commandManager);
 				}
 			}
 		} catch (Throwable ignored) {

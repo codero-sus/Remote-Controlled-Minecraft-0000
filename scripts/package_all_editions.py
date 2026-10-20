@@ -119,24 +119,29 @@ def main() -> int:
     if not compiled_by_ver:
         raise RuntimeError(f"No compiled JARs found under {args.shards_dir}")
 
-    # Pick clean Java 8 obfuscated base template & Java 25 unobfuscated base template
+    # Pick clean Java 8 obfuscated base template & Java 21 / Java 25 unobfuscated base templates
     obf_java8_jar: bytes | None = None
     obf_any_jar: bytes | None = None
-    unobf_jar: bytes | None = None
+    unobf_java21_jar: bytes | None = None
+    unobf_any_jar: bytes | None = None
 
     for item in catalog:
         v = sanitize_filename_version(item["version"])
         if v in compiled_by_ver:
             raw = compiled_by_ver[v].read_bytes()
-            if item["unobfuscated"] and unobf_jar is None:
-                unobf_jar = raw
-            elif not item["unobfuscated"]:
+            if item["unobfuscated"]:
+                if unobf_any_jar is None:
+                    unobf_any_jar = raw
+                if item["java_release"] <= 21 and unobf_java21_jar is None:
+                    unobf_java21_jar = raw
+            else:
                 if obf_any_jar is None:
                     obf_any_jar = raw
                 if item["java_release"] == 8 and obf_java8_jar is None:
                     obf_java8_jar = raw
 
     obf_template = obf_java8_jar or obf_any_jar
+    unobf_jar = unobf_any_jar or unobf_java21_jar
     if obf_template is None and unobf_jar is None:
         raise RuntimeError("Missing base templates for edition packaging.")
 
@@ -176,7 +181,10 @@ def main() -> int:
             origin = "gradle-loom-compiled"
             direct_count += 1
         else:
-            base_bytes = unobf_jar if is_unobf else obf_template
+            if is_unobf:
+                base_bytes = (unobf_java21_jar or unobf_jar) if java_rel <= 21 else unobf_jar
+            else:
+                base_bytes = obf_template
             if base_bytes is None:
                 raise RuntimeError(f"No compatible template available for {mc_ver} (unobf={is_unobf})")
             dest_jar.write_bytes(
