@@ -1,0 +1,21 @@
+name: Auto-Detect & Build Newly Released Fabric Minecraft Editions
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  trigger-latest-fabric-check:
+    name: Build Latest Fabric Editions Matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Trigger full multi-edition build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run build-all-fabric-editions.yml --ref "${{ github.ref_name }}"

@@ -1,0 +1,36 @@
+{
+	"schemaVersion": 1,
+	"id": "rcm",
+	"version": "${version}+mc${mc_version}",
+	"name": "Remote Controlled Minecraft",
+	"description": "Full remote control, live monitoring, interactive Discord gamepad, screenshot capture, chat bridge, macro automation, and file management for Minecraft via Discord.",
+	"authors": [
+		"codero-sus"
+	],
+	"contact": {
+		"homepage": "https://github.com/codero-sus/Remote-Controlled-Minecraft-0000",
+		"sources": "https://github.com/codero-sus/Remote-Controlled-Minecraft-0000"
+	},
+	"license": "MIT",
+	"icon": "assets/rcm/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.rcm.RcmMod"
+		],
+		"client": [
+			"dev.rcm.RcmClientMod"
+		],
+		"server": [
+			"dev.rcm.RcmServerMod"
+		]
+	},
+	"mixins": [
+		"rcm.mixins.json"
+	],
+	"depends": {
+		"fabricloader": "*",
+		"minecraft": "${mc_dep}",
+		"java": ">=${java_release}"
+	}
+}
