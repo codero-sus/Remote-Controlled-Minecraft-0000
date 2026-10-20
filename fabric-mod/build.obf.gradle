@@ -1,0 +1,90 @@
+plugins {
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+	id 'maven-publish'
+}
+
+def mcVer = (project.findProperty('minecraft_version') ?: '1.21.11').toString()
+def loaderVer = (project.findProperty('loader_version') ?: '0.20.1').toString()
+def yarnVer = (project.findProperty('yarn_mappings') ?: '').toString()
+def javaRel = (project.findProperty('java_release') ?: '21').toString().toInteger()
+def mcDep = (project.findProperty('minecraft_dep') ?: mcVer).toString()
+def javaVerEnum = JavaVersion.toVersion(javaRel == 8 ? '1.8' : javaRel.toString())
+
+version = project.property('mod_version')
+group = project.property('maven_group')
+
+base {
+	archivesName = "${project.property('archives_base_name')}-mc${mcVer}"
+}
+
+repositories {
+	mavenCentral()
+}
+
+sourceSets {
+	main {
+		java.srcDir 'src/obf/java'
+		resources.srcDir 'src/obf/resources'
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${mcVer}"
+	if (!yarnVer.isEmpty() && yarnVer != 'MOJANG') {
+		mappings "net.fabricmc:yarn:${yarnVer}:v2"
+	} else {
+		mappings loom.officialMojangMappings()
+	}
+	modImplementation "net.fabricmc:fabric-loader:${loaderVer}"
+
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+processResources {
+	def modVer = project.version.toString()
+	def javaRelStr = javaRel.toString()
+	inputs.property 'version', modVer
+	inputs.property 'mc_dep', mcDep
+	inputs.property 'java_release', javaRelStr
+	inputs.property 'mc_version', mcVer
+
+	filesMatching('fabric.mod.json') {
+		expand(
+			'version': modVer,
+			'mc_dep': mcDep,
+			'java_release': javaRelStr,
+			'mc_version': mcVer
+		)
+	}
+}
+
+tasks.named('compileJava', JavaCompile).configure {
+	options.encoding = 'UTF-8'
+	options.release = javaRel
+}
+
+tasks.named('compileTestJava', JavaCompile).configure {
+	options.encoding = 'UTF-8'
+	options.release = Math.max(javaRel, 17)
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = javaVerEnum
+	targetCompatibility = javaVerEnum
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+}
+
+jar {
+	def archiveLabel = base.archivesName.get()
+	inputs.property 'archiveLabel', archiveLabel
+
+	from('../LICENSE') {
+		rename { "${it}_${archiveLabel}" }
+	}
+}
