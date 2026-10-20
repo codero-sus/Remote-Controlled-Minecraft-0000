@@ -38,19 +38,28 @@ def _make_fake_jar(java_release: int) -> bytes:
 def test_discover_and_package_pipeline(tmp_path: Path) -> None:
     games = [
         {"version": "26.3", "stable": True},
+        {"version": "26.1.2", "stable": True},
+        {"version": "26.1", "stable": True},
         {"version": "26w14a", "stable": False},
+        {"version": "1.21.11_unobfuscated", "stable": False},
+        {"version": "25w46a_unobfuscated", "stable": False},
         {"version": "1.21.11", "stable": True},
         {"version": "1.20.1", "stable": True},
         {"version": "1.17.1", "stable": True},
         {"version": "1.14", "stable": True},
         {"version": "20w14infinite", "stable": False},
     ]
-    inter = {"1.21.11", "1.20.1", "1.17.1", "1.14", "20w14infinite"}
+    # Include 26.1 and 26.1.2 inside intermediary_set just like live meta.fabricmc.net!
+    inter = {"26.1.2", "26.1", "1.21.11", "1.20.1", "1.17.1", "1.14", "20w14infinite"}
     yarns = {"1.21.11": "1.21.11+build.1", "1.14": "1.14+build.21"}
     cat = disc.build_edition_catalog(games, inter, yarns, "0.20.1")
 
     by_ver = {c["version"]: c for c in cat}
     assert by_ver["26.3"]["unobfuscated"] is True
+    assert by_ver["26.1.2"]["unobfuscated"] is True
+    assert by_ver["26.1"]["unobfuscated"] is True
+    assert by_ver["1.21.11_unobfuscated"]["unobfuscated"] is True
+    assert by_ver["1.21.11_unobfuscated"]["java_release"] == 21
     assert by_ver["26.3"]["java_release"] == 25
     assert by_ver["1.21.11"]["java_release"] == 21
     assert by_ver["1.20.1"]["java_release"] == 17
@@ -63,6 +72,7 @@ def test_discover_and_package_pipeline(tmp_path: Path) -> None:
     shards = tmp_path / "shards"
     shards.mkdir()
     (shards / "remote-controlled-minecraft-mc1.14-2.0.0.jar").write_bytes(_make_fake_jar(8))
+    (shards / "remote-controlled-minecraft-mc1.21.11_unobfuscated-2.0.0.jar").write_bytes(_make_fake_jar(21))
     (shards / "remote-controlled-minecraft-mc26.3-2.0.0.jar").write_bytes(_make_fake_jar(25))
 
     out_dir = tmp_path / "dist"
@@ -78,5 +88,5 @@ def test_discover_and_package_pipeline(tmp_path: Path) -> None:
     assert pkg.main() == 0
 
     manifest = json.loads((out_dir / "EDITION-MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["total_fabric_editions_built_and_verified"] == 7
+    assert manifest["total_fabric_editions_built_and_verified"] == 11
     assert (out_dir / "SHA256SUMS.txt").exists()
